@@ -221,3 +221,47 @@ echo "Step 5: Cloning the second repository using gitception:"
     show_command=1 assert diff -r --exclude ".git" -- \
         "${tempdir}/first" "${tempdir}/third" 2>&1 | indent
 } | indent
+
+###
+section_break
+
+echo "Step 6: Adding a new commit to first and pushing again (no -f):"
+{
+    (
+        set -x
+        cd "${tempdir}/first"
+        head -c "${random_data_per_file}" "${random_source}" > "extra.data"
+        git add -- "${tempdir}/first"
+        git commit -m "Commit #${num_commits}"
+        git push "gcrypt::${tempdir}/second.git#${default_branch}" \
+            "${default_branch}"
+    ) 2>&1
+} | indent
+
+###
+section_break
+
+echo "Step 7: Cloning the updated second repository and verifying:"
+{
+    (
+        set -x
+        git clone -b "${default_branch}" \
+            "gcrypt::${tempdir}/second.git#${default_branch}" -- \
+                "${tempdir}/fourth"
+    ) 2>&1
+
+    echo
+    echo "Verifying that the first and fourth repositories have the same"
+    echo "commit log as each other:"
+    # shellcheck disable=SC2312
+    assert diff \
+        <(fastfail cd "${tempdir}/first"; fastfail git log --oneline) \
+        <(fastfail cd "${tempdir}/fourth"; fastfail git log --oneline) \
+            2>&1 | indent
+
+    echo
+    echo "Verifying that the first and fourth repositories have the same"
+    echo "files in their respective working directories:"
+    show_command=1 assert diff -r --exclude ".git" -- \
+        "${tempdir}/first" "${tempdir}/fourth" 2>&1 | indent
+} | indent

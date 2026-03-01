@@ -259,9 +259,6 @@ repository, the same as is done when using a gcrypt repo.
 Known issues
 ============
 
-Every git push effectively has ``--force``.  Be sure to pull before
-pushing.
-
 git-remote-gcrypt can decide to repack the remote without warning,
 which means that your push can suddenly take significantly longer than
 you were expecting, as your whole history has to be reuploaded.

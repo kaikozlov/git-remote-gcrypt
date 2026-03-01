@@ -225,7 +225,24 @@ echo "Step 5: Cloning the second repository using gitception:"
 ###
 section_break
 
-echo "Step 6: Adding a new commit to first and pushing again (no -f):"
+hook_ran_file="${tempdir}/hook-ran"
+echo "Step 6: Installing a pre-push hook that writes to stdout and a sentinel file:"
+{
+    mkdir -p "${tempdir}/first/.git/hooks"
+    cat > "${tempdir}/first/.git/hooks/pre-push" << EOF
+#!/usr/bin/env bash
+echo "pre-push hook stdout output"
+touch "${hook_ran_file}"
+exit 0
+EOF
+    chmod +x "${tempdir}/first/.git/hooks/pre-push"
+    echo "Installed pre-push hook that writes to stdout and touches ${hook_ran_file}."
+} | indent
+
+###
+section_break
+
+echo "Step 7: Adding a new commit to first and pushing again (no -f) with pre-push hook:"
 {
     (
         set -x
@@ -236,12 +253,16 @@ echo "Step 6: Adding a new commit to first and pushing again (no -f):"
         git push "gcrypt::${tempdir}/second.git#${default_branch}" \
             "${default_branch}"
     ) 2>&1
+
+    echo
+    echo "Verifying that the pre-push hook was run:"
+    show_command=1 assert test -f "${hook_ran_file}" 2>&1 | indent
 } | indent
 
 ###
 section_break
 
-echo "Step 7: Cloning the updated second repository and verifying:"
+echo "Step 8: Cloning the updated second repository and verifying:"
 {
     (
         set -x

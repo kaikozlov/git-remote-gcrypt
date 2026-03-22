@@ -42,6 +42,7 @@ Tempdir=
 
 Repoid=
 Refslist=
+Push_refslist=
 Packlist=
 Keeplist=
 Extnlist=
@@ -147,6 +148,25 @@ line_count()
 	IFS=$Newline
 	set -- $1
 	xecho "$#"
+}
+
+ref_oid_from_list()
+{
+	local f_ref_="$1"
+	awk '$2 == ref { print $1; exit }' ref="$f_ref_" <<EOF
+$2
+EOF
+}
+
+push_update_allowed()
+{
+	local f_dst_="$1" f_src_="$2" f_push_refs_="$3" f_remote_oid_= f_src_oid_=
+	isnull "$f_src_" && return 0
+	f_remote_oid_=$(ref_oid_from_list "$f_dst_" "$f_push_refs_")
+	isnull "$f_remote_oid_" && return 0
+	f_src_oid_=$(xfeed "$f_src_" safe_git_rev_parse)
+	isnonnull "$f_src_oid_" || return 1
+	git merge-base --is-ancestor "$f_remote_oid_" "$f_src_oid_" >/dev/null 2>&1
 }
 
 # Convert URI in standard or nonstandard form to rsync's user@host:path
@@ -715,10 +735,16 @@ do_list()
 
 do_fetch()
 {
-	# Download packs in the manifest that don't appear in have_packs
-	local pneed_= premote_=
-
 	ensure_connected
+	fetch_missing_packs
+
+	echo_git # end with blank line
+}
+
+# Download packs in the manifest that don't appear in have_packs.
+fetch_missing_packs()
+{
+	local pneed_= premote_=
 
 	# The `+` for $GITCEPTION is pointless but we will be safe for stacking
 	pick_fields_1_2 @premote_ "$Packlist"
@@ -730,8 +756,6 @@ do_fetch()
 	fi
 
 	xfeed "$pneed_" get_pack_files
-
-	echo_git # end with blank line
 }
 
 # do_push PUSHARGS (multiple lines like +src:dst, with both + and src opt.)
@@ -743,7 +767,7 @@ do_push()
 	# The manifest is encrypted.
 	local r_revlist= pack_id= key_= obj_= src_= dst_= \
 		r_pack_delete= tmp_encrypted= tmp_objlist= tmp_manifest= \
-		force_passed=
+		push_refslist_= accepted_dsts= forced_=
 
 	ensure_connected
 
@@ -751,6 +775,8 @@ do_push()
 	then
 		make_new_repo
 	fi
+	fetch_missing_packs
+	push_refslist_=${Push_refslist:-$Refslist}
 
 	if isnonnull "$Refslist"
 	then
@@ -761,12 +787,21 @@ do_push()
 
 	while IFS=: read -r src_ dst_ # << +src:dst
 	do
-		if [ $(echo "$src_" | cut -c1) != + ]
+		forced_=
+		if [ "$(echo "$src_" | cut -c1)" = + ]
 		then
-			force_passed=false
+			forced_=true
 		fi
 
 		src_=${src_#+}
+		if [ "$forced_" != true ] &&
+			! push_update_allowed "$dst_" "$src_" "$push_refslist_"
+		then
+			echo_git "error $dst_ non-fast-forward"
+			continue
+		fi
+
+		append_to @accepted_dsts "$dst_"
 		filter_to ! @Refslist "$Hex40 $dst_" "$Refslist"
 
 		if isnonnull "$src_"
@@ -779,16 +814,12 @@ do_push()
 $1
 EOF
 
-	if [ "$force_passed" = false ]
+	if isnull "$accepted_dsts"
 	then
-		if [ "$Conf_force_required" = true ]
-		then
-			echo_die "Implicit force push disallowed by gcrypt configuration."
-		else
-			echo_info "Due to a longstanding bug, this push implicitly has --force."
-			echo_info "Consider explicitly passing --force, and setting"
-			echo_info "gcrypt's require-explicit-force-push git config key."
-		fi
+		Refslist=$push_refslist_
+		Push_refslist=$Refslist
+		echo_git
+		return 0
 	fi
 
 	tmp_encrypted="$Tempdir/packP"
@@ -854,13 +885,15 @@ EOF
 	PUT_FINAL "$URL"
 
 	# ok all updates
-	while IFS=: read -r src_ dst_ # << +src:dst
+	while read -r dst_ # << dst
 	do
+		isnonnull "$dst_" || continue
 		echo_git "ok $dst_"
 	done <<EOF
-$1
+$accepted_dsts
 EOF
-	
+
+	Push_refslist=$Refslist
 	echo_git 
 }
 
@@ -914,8 +947,12 @@ gcrypt_main_loop()
 		capabilities)
 			do_capabilities
 			;;
-		list|list\ for-push)
+		list)
 			do_list
+			;;
+		list\ for-push)
+			do_list
+			Push_refslist=$Refslist
 			;;
 		fetch\ *)
 			r_args=${input_##fetch }
